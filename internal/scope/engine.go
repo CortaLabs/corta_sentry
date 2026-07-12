@@ -14,6 +14,7 @@ import (
 
 type Decision struct {
 	ID      string    `json:"id"`
+	Phase   string    `json:"phase"`
 	Allowed bool      `json:"allowed"`
 	Reason  string    `json:"reason"`
 	Target  string    `json:"target"`
@@ -97,7 +98,10 @@ func NormalizeAddr(s string) (netip.Addr, error) {
 	return a.Unmap(), nil
 }
 func (e *Engine) Decide(target string, port int) Decision {
-	d := Decision{ID: uuid.Must(uuid.NewV7()).String(), Target: target, Port: port, At: time.Now().UTC()}
+	return e.decide(target, port, "execution")
+}
+func (e *Engine) decide(target string, port int, phase string) Decision {
+	d := Decision{ID: uuid.Must(uuid.NewV7()).String(), Phase: phase, Target: target, Port: port, At: time.Now().UTC()}
 	if !e.cfg.ActiveEnabled {
 		d.Reason = "active probing disabled"
 		return e.finalize(d)
@@ -202,7 +206,7 @@ func (e *Engine) ValidateJob(targets []string, ports []int) ([]netip.Addr, []int
 	}
 	for _, a := range aa {
 		for _, p := range pp {
-			if d := e.Decide(a.String(), p); !d.Allowed {
+			if d := e.decide(a.String(), p, "preflight"); !d.Allowed {
 				return nil, nil, fmt.Errorf("scope denied %s:%d: %s", a, p, d.Reason)
 			}
 		}

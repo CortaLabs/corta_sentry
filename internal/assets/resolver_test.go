@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/cortalabs/cortasentry/internal/domain"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,6 +70,17 @@ func TestStrongAgreementNewIP(t *testing.T) {
 	y, _ := r.Resolve(context.Background(), obs("10.0.0.2"), []domain.Identifier{{Type: "mac", Value: "aa"}})
 	if x.AssetID != y.AssetID || y.Created {
 		t.Fatalf("did not preserve identity: %#v %#v", x, y)
+	}
+	if y.Reason != "strong_identifier_match: mac=aa" {
+		t.Fatalf("underspecified reason %q", y.Reason)
+	}
+}
+
+func TestContinuityReasonNamesEvidencePath(t *testing.T) {
+	m := &mem{assets: map[string]domain.Asset{"old": {}}, lookup: map[string][]string{}, continuity: []string{"old"}}
+	x, err := New(m).Resolve(context.Background(), obs("10.0.0.1"), []domain.Identifier{{Type: "service_set", Value: "digest"}})
+	if err != nil || x.AssetID != "old" || !strings.Contains(x.Reason, "continuity_match: address=10.0.0.1 service_set=digest window=30m") {
+		t.Fatalf("continuity result %#v err=%v", x, err)
 	}
 }
 func TestWeakEvidenceNeverMerges(t *testing.T) {

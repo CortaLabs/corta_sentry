@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cortalabs/cortasentry/internal/domain"
@@ -34,6 +35,9 @@ func (r *Resolver) Resolve(ctx context.Context, o domain.Observation, ids []doma
 	serviceSet := ""
 	strongSupplied := false
 	strongUnmatched := false
+	strongMatchedEvidence := []string{}
+	strongUnmatchedEvidence := []string{}
+	continuityUsed := false
 	for _, id := range ids {
 		if id.Type == "service_set" {
 			serviceSet = id.Value
@@ -48,6 +52,9 @@ func (r *Resolver) Resolve(ctx context.Context, o domain.Observation, ids []doma
 		}
 		if len(found) == 0 {
 			strongUnmatched = true
+			strongUnmatchedEvidence = append(strongUnmatchedEvidence, id.Type+"="+id.Value)
+		} else {
+			strongMatchedEvidence = append(strongMatchedEvidence, id.Type+"="+id.Value)
 		}
 		for _, a := range found {
 			matches[a] = true
@@ -62,6 +69,7 @@ func (r *Resolver) Resolve(ctx context.Context, o domain.Observation, ids []doma
 		for _, id := range continuity {
 			matches[id] = true
 		}
+		continuityUsed = len(continuity) > 0
 	}
 	switch {
 	case strongUnmatched && len(matches) > 0:
@@ -69,16 +77,24 @@ func (r *Resolver) Resolve(ctx context.Context, o domain.Observation, ids []doma
 		if err := r.store.CreateAsset(ctx, &a); err != nil {
 			return result, err
 		}
-		result = Result{AssetID: a.ID, Reason: "strong identifiers partially contradicted an existing asset", Created: true, Conflict: true}
+		result = Result{AssetID: a.ID, Reason: "strong_identifier_conflict: matched=" + strings.Join(strongMatchedEvidence, ",") + " unmatched=" + strings.Join(strongUnmatchedEvidence, ","), Created: true, Conflict: true}
 	case len(matches) == 0:
 		a := domain.Asset{DisplayName: "Asset " + o.TargetIP.String(), FirstSeen: o.ObservedAt, LastSeen: o.ObservedAt, Status: "active", Criticality: "normal"}
 		if err := r.store.CreateAsset(ctx, &a); err != nil {
 			return result, err
 		}
-		result = Result{AssetID: a.ID, Reason: "insufficient identity evidence; created safe duplicate", Created: true}
+		reason := "insufficient_identity_evidence: created safe duplicate"
+		if strongSupplied {
+			reason = "no_strong_identifier_match: " + strings.Join(strongUnmatchedEvidence, ",") + "; created safe duplicate"
+		}
+		result = Result{AssetID: a.ID, Reason: reason, Created: true}
 	case len(matches) == 1:
 		for id := range matches {
-			result = Result{AssetID: id, Reason: "strong identifier agreement or recent address plus service-set continuity"}
+			reason := "strong_identifier_match: " + strings.Join(strongMatchedEvidence, ",")
+			if continuityUsed {
+				reason = fmt.Sprintf("continuity_match: address=%s service_set=%s window=30m", o.TargetIP, serviceSet)
+			}
+			result = Result{AssetID: id, Reason: reason}
 		}
 	default:
 		a := domain.Asset{DisplayName: "Conflicting asset " + o.TargetIP.String(), FirstSeen: o.ObservedAt, LastSeen: o.ObservedAt, Status: "identity_conflict", Ambiguous: true, Criticality: "normal"}

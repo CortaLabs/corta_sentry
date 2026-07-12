@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/cortalabs/cortasentry/internal/config"
 	"github.com/cortalabs/cortasentry/internal/domain"
+	"github.com/cortalabs/cortasentry/internal/scope"
 	"net/netip"
 	"path/filepath"
 	"testing"
@@ -35,7 +37,7 @@ func TestMigrationPersistenceAndObservationImmutability(t *testing.T) {
 		t.Fatalf("persistence got=%v err=%v", got, err)
 	}
 	var v int
-	if err = s.DB().QueryRow("SELECT max(version) FROM schema_migrations").Scan(&v); err != nil || v != 2 {
+	if err = s.DB().QueryRow("SELECT max(version) FROM schema_migrations").Scan(&v); err != nil || v != 3 {
 		t.Fatalf("version=%d err=%v", v, err)
 	}
 }
@@ -60,5 +62,40 @@ func TestExpiredJobLeaseRecovery(t *testing.T) {
 	}
 	if _, err = s.ClaimJob(context.Background(), "three", time.Minute); err != sql.ErrNoRows {
 		t.Fatalf("expected no job, got %v", err)
+	}
+}
+
+func TestPreflightAllowsStayOutOfPrimaryAudit(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "scope.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	cfg := config.Default().Scope
+	cfg.ActiveEnabled = true
+	cfg.AllowedCIDRs = []string{"127.0.0.1/32"}
+	cfg.AllowedPorts = []int{80}
+	engine, err := scope.New(cfg, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = engine.ValidateJob([]string{"127.0.0.1"}, []int{80}); err != nil {
+		t.Fatal(err)
+	}
+	var policies, audits int
+	if err = s.DB().QueryRow("SELECT count(*) FROM policy_decisions WHERE phase='preflight'").Scan(&policies); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DB().QueryRow("SELECT count(*) FROM audit_events WHERE action='scope.decision'").Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if policies != 1 || audits != 0 {
+		t.Fatalf("preflight policies=%d audits=%d", policies, audits)
+	}
+	if decision := engine.Decide("127.0.0.1", 80); !decision.Allowed || decision.Phase != "execution" {
+		t.Fatalf("execution decision %#v", decision)
+	}
+	if err = s.DB().QueryRow("SELECT count(*) FROM audit_events WHERE action='scope.decision'").Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("execution audits=%d err=%v", audits, err)
 	}
 }

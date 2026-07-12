@@ -76,10 +76,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&current); err != nil {
 		return err
 	}
-	if current > 2 {
-		return fmt.Errorf("database schema version %d is newer than supported version 2", current)
+	if current > 3 {
+		return fmt.Errorf("database schema version %d is newer than supported version 3", current)
 	}
-	for v := current + 1; v <= 2; v++ {
+	for v := current + 1; v <= 3; v++ {
 		name := fmt.Sprintf("%04d_", v)
 		entries, _ := migrations.FS.ReadDir(".")
 		var file string
@@ -140,12 +140,14 @@ func (s *Store) ScopeDecision(d scope.Decision) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec("INSERT INTO policy_decisions(id,at,target_ip,port,allowed,reason) VALUES(?,?,?,?,?,?)", d.ID, d.At.Format(time.RFC3339Nano), d.Target, d.Port, d.Allowed, d.Reason); err != nil {
+	if _, err = tx.Exec("INSERT INTO policy_decisions(id,at,target_ip,port,allowed,reason,phase) VALUES(?,?,?,?,?,?,?)", d.ID, d.At.Format(time.RFC3339Nano), d.Target, d.Port, d.Allowed, d.Reason, d.Phase); err != nil {
 		return err
 	}
-	details, _ := json.Marshal(map[string]any{"target": d.Target, "port": d.Port, "reason": d.Reason})
-	if _, err = tx.Exec("INSERT INTO audit_events(id,at,actor,action,resource_type,resource_id,outcome,request_id,details_json) VALUES(?,?,?,?,?,?,?,?,?)", newID(), d.At.Format(time.RFC3339Nano), "system", "scope.decision", "target", d.Target, map[bool]string{true: "allowed", false: "denied"}[d.Allowed], "", string(details)); err != nil {
-		return err
+	if d.Phase != "preflight" || !d.Allowed {
+		details, _ := json.Marshal(map[string]any{"target": d.Target, "port": d.Port, "reason": d.Reason, "phase": d.Phase})
+		if _, err = tx.Exec("INSERT INTO audit_events(id,at,actor,action,resource_type,resource_id,outcome,request_id,details_json) VALUES(?,?,?,?,?,?,?,?,?)", newID(), d.At.Format(time.RFC3339Nano), "system", "scope.decision", "target", d.Target, map[bool]string{true: "allowed", false: "denied"}[d.Allowed], "", string(details)); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

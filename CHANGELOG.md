@@ -11,3 +11,4 @@
 - Authenticated REST API, CSRF-protected browser sessions, metrics, embedded React console, fixture demo, installer, Docker, and CI.
 - Official MCP toolset for Codex and Claude, versioned observation JSONL export, and Linux passive host-connection snapshots.
 - Fixed empty-job JSON responses that broke the Scans view, custom-config path resolution, terminal queued cancellation, and strong-identity continuity conflicts.
+- Split successful preflight authorization traces from primary operator audit events while retaining fail-closed persistence and execution-time audit; made resolver attachment reasons name their exact evidence path.
