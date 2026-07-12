@@ -21,33 +21,41 @@ import (
 	"golang.org/x/time/rate"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Server struct {
-	store      *sqlite.Store
-	auth       *auth.Manager
-	scope      *scope.Engine
-	scanner    *discovery.Scanner
-	rules      *fingerprint.Engine
-	rulePaths  []string
-	log        *slog.Logger
-	mux        *http.ServeMux
-	loginRate  *rate.Limiter
-	scanRate   *rate.Limiter
-	jobManager *jobmanager.Manager
-	importSink importer.Sink
+	store        *sqlite.Store
+	auth         *auth.Manager
+	scope        *scope.Engine
+	scanner      *discovery.Scanner
+	rules        *fingerprint.Engine
+	rulePaths    []string
+	log          *slog.Logger
+	mux          *http.ServeMux
+	loginRates   map[string]*rate.Limiter
+	loginMu      sync.Mutex
+	allowedHosts map[string]bool
+	scanRate     *rate.Limiter
+	jobManager   *jobmanager.Manager
+	importSink   importer.Sink
 }
 
-func New(store *sqlite.Store, a *auth.Manager, sc *scope.Engine, scanner *discovery.Scanner, rules *fingerprint.Engine, advisories *findings.Engine, rulePaths []string, log *slog.Logger, jobs *jobmanager.Manager) *Server {
-	s := &Server{store: store, auth: a, scope: sc, scanner: scanner, rules: rules, rulePaths: rulePaths, log: log, mux: http.NewServeMux(), loginRate: rate.NewLimiter(rate.Every(time.Second), 5), scanRate: rate.NewLimiter(rate.Every(time.Second), 3), jobManager: jobs, importSink: importer.PipelineSink{Scanner: scanner, Store: store, Advisories: advisories}}
+func New(store *sqlite.Store, a *auth.Manager, sc *scope.Engine, scanner *discovery.Scanner, rules *fingerprint.Engine, advisories *findings.Engine, rulePaths, allowedHosts []string, log *slog.Logger, jobs *jobmanager.Manager) *Server {
+	hosts := map[string]bool{}
+	for _, host := range allowedHosts {
+		hosts[strings.ToLower(strings.TrimSpace(host))] = true
+	}
+	s := &Server{store: store, auth: a, scope: sc, scanner: scanner, rules: rules, rulePaths: rulePaths, log: log, mux: http.NewServeMux(), loginRates: map[string]*rate.Limiter{}, allowedHosts: hosts, scanRate: rate.NewLimiter(rate.Every(time.Second), 3), jobManager: jobs, importSink: importer.PipelineSink{Scanner: scanner, Store: store, Advisories: advisories}}
 	s.routes()
 	return s
 }
-func (s *Server) Handler() http.Handler { return s.requestID(s.securityHeaders(s.mux)) }
+func (s *Server) Handler() http.Handler { return s.requestID(s.hostGuard(s.securityHeaders(s.mux))) }
 func (s *Server) routes() {
 	m := s.mux
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
@@ -60,7 +68,7 @@ func (s *Server) routes() {
 	})
 	m.Handle("GET /metrics", promhttp.Handler())
 	m.HandleFunc("POST /api/v1/auth/login", s.login)
-	m.HandleFunc("GET /api/v1/auth/session", s.session)
+	m.HandleFunc("POST /api/v1/auth/session", s.session)
 	m.HandleFunc("POST /api/v1/auth/logout", s.protect(s.logout, true))
 	m.HandleFunc("GET /api/v1/assets", s.protect(s.assets, false))
 	m.HandleFunc("GET /api/v1/overview", s.protect(func(w http.ResponseWriter, r *http.Request) {
@@ -102,6 +110,10 @@ func (s *Server) protect(next http.HandlerFunc, csrf bool) http.HandlerFunc {
 			problem(w, 403, "csrf_failed", "valid CSRF token required for browser sessions")
 			return
 		}
+		if csrf && !auth.BrowserOriginAllowed(r) {
+			problem(w, 403, "cross_origin_denied", "cross-origin browser mutation denied")
+			return
+		}
 		r = r.WithContext(context.WithValue(r.Context(), actorKey{}, actor))
 		next(w, r)
 	}
@@ -109,8 +121,21 @@ func (s *Server) protect(next http.HandlerFunc, csrf bool) http.HandlerFunc {
 
 type actorKey struct{}
 
+func actorFrom(r *http.Request) string {
+	actor, _ := r.Context().Value(actorKey{}).(string)
+	if actor == "" {
+		return "admin"
+	}
+	return actor
+}
+
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if !s.loginRate.Allow() {
+	if !auth.BrowserOriginAllowed(r) {
+		problem(w, 403, "cross_origin_denied", "cross-origin browser login denied")
+		return
+	}
+	if !s.allowLogin(r.RemoteAddr) {
+		_ = s.store.Audit(r.Context(), domain.AuditEvent{Actor: "remote:" + remoteIP(r.RemoteAddr), Action: "auth.login", ResourceType: "session", Outcome: "rate_limited", RequestID: requestIDFrom(r.Context())})
 		problem(w, 429, "rate_limited", "too many login attempts")
 		return
 	}
@@ -123,14 +148,23 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	session, csrf, err := s.auth.Login(r.Context(), v.Token)
 	if err != nil {
 		time.Sleep(100 * time.Millisecond)
+		_ = s.store.Audit(r.Context(), domain.AuditEvent{Actor: "remote:" + remoteIP(r.RemoteAddr), Action: "auth.login", ResourceType: "session", Outcome: "denied", RequestID: requestIDFrom(r.Context())})
 		problem(w, 401, "invalid_credentials", "invalid credentials")
 		return
 	}
+	if err = s.store.Audit(r.Context(), domain.AuditEvent{Actor: actorFrom(r), Action: "auth.login", ResourceType: "session", Outcome: "success", RequestID: requestIDFrom(r.Context())}); err != nil {
+		_ = s.auth.RevokeSession(r.Context(), session)
+		problem(w, 503, "audit_unavailable", "login audit persistence failed")
+		return
+	}
 	s.auth.SetCookie(w, session)
-	_ = s.store.Audit(r.Context(), domain.AuditEvent{Actor: "admin", Action: "auth.login", ResourceType: "session", Outcome: "success"})
 	write(w, 200, map[string]string{"csrf_token": csrf})
 }
 func (s *Server) session(w http.ResponseWriter, r *http.Request) {
+	if !auth.BrowserOriginAllowed(r) {
+		problem(w, 403, "cross_origin_denied", "cross-origin session refresh denied")
+		return
+	}
 	csrf, err := s.auth.RefreshCSRF(r.Context(), r)
 	if err != nil {
 		problem(w, 401, "unauthorized", "browser session unavailable")
@@ -139,10 +173,46 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 	write(w, 200, map[string]string{"csrf_token": csrf})
 }
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	_ = s.auth.Logout(r.Context(), r)
-	http.SetCookie(w, &http.Cookie{Name: auth.CookieName, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
-	_ = s.store.Audit(r.Context(), domain.AuditEvent{Actor: "admin", Action: "auth.logout", ResourceType: "session", Outcome: "success"})
+	if err := s.auth.Logout(r.Context(), r); err != nil {
+		problem(w, 503, "logout_failed", "session revocation failed")
+		return
+	}
+	s.auth.ClearCookie(w)
+	if err := s.store.Audit(r.Context(), domain.AuditEvent{Actor: actorFrom(r), Action: "auth.logout", ResourceType: "session", Outcome: "success", RequestID: requestIDFrom(r.Context())}); err != nil {
+		problem(w, 503, "audit_unavailable", "logout audit persistence failed")
+		return
+	}
 	w.WriteHeader(204)
+}
+func remoteIP(value string) string {
+	host, _, err := net.SplitHostPort(value)
+	if err == nil {
+		return host
+	}
+	return value
+}
+func (s *Server) allowLogin(remote string) bool {
+	key := remoteIP(remote)
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	if len(s.loginRates) >= 4096 {
+		s.loginRates = map[string]*rate.Limiter{}
+	}
+	limiter := s.loginRates[key]
+	if limiter == nil {
+		limiter = rate.NewLimiter(rate.Every(time.Second), 5)
+		s.loginRates[key] = limiter
+	}
+	return limiter.Allow()
+}
+func (s *Server) hostGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.allowedHosts[strings.ToLower(r.Host)] {
+			problem(w, 421, "host_denied", "request Host is not configured")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 func page(r *http.Request) (int, int) {
 	l, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -238,7 +308,7 @@ func (s *Server) scan(w http.ResponseWriter, r *http.Request) {
 	}
 	targets, ports, err := s.scope.ValidateJob(v.Targets, v.Ports)
 	if err != nil {
-		_ = s.store.Audit(r.Context(), domain.AuditEvent{Actor: "admin", Action: "scan.create", ResourceType: "scan", Outcome: "denied", RequestID: requestIDFrom(r.Context()), Details: json.RawMessage(fmt.Sprintf(`{"reason":%q}`, err.Error()))})
+		_ = s.store.Audit(r.Context(), domain.AuditEvent{Actor: actorFrom(r), Action: "scan.create", ResourceType: "scan", Outcome: "denied", RequestID: requestIDFrom(r.Context()), Details: json.RawMessage(fmt.Sprintf(`{"reason":%q}`, err.Error()))})
 		problem(w, 403, "scope_denied", err.Error())
 		return
 	}
@@ -252,7 +322,11 @@ func (s *Server) scan(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, "storage_error", err.Error())
 		return
 	}
-	_ = s.store.Audit(r.Context(), domain.AuditEvent{Actor: "admin", Action: "scan.create", ResourceType: "scan", ResourceID: j.ID, Outcome: "accepted", RequestID: requestIDFrom(r.Context())})
+	if auditErr := s.store.Audit(r.Context(), domain.AuditEvent{Actor: actorFrom(r), Action: "scan.create", ResourceType: "scan", ResourceID: j.ID, Outcome: "accepted", RequestID: requestIDFrom(r.Context())}); auditErr != nil {
+		_ = s.jobManager.Cancel(r.Context(), j.ID)
+		problem(w, 503, "audit_unavailable", "scan creation audit failed")
+		return
+	}
 	write(w, 202, j)
 }
 func (s *Server) scanPreview(w http.ResponseWriter, r *http.Request) {
@@ -282,7 +356,10 @@ func (s *Server) cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := s.jobManager.Cancel(r.Context(), id)
-	_ = s.store.Audit(r.Context(), domain.AuditEvent{Actor: "admin", Action: "scan.cancel", ResourceType: "scan", ResourceID: id, Outcome: outcome(err), RequestID: requestIDFrom(r.Context())})
+	auditErr := s.store.Audit(r.Context(), domain.AuditEvent{Actor: actorFrom(r), Action: "scan.cancel", ResourceType: "scan", ResourceID: id, Outcome: outcome(err), RequestID: requestIDFrom(r.Context())})
+	if err == nil {
+		err = auditErr
+	}
 	respond(w, map[string]string{"status": "cancellation_requested"}, err)
 }
 func (s *Server) merge(w http.ResponseWriter, r *http.Request) {
@@ -291,7 +368,10 @@ func (s *Server) merge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := s.store.MergeAssets(r.Context(), v.Source, v.Target)
-	_ = s.store.Audit(r.Context(), domain.AuditEvent{Actor: "admin", Action: "asset.merge", ResourceType: "asset", ResourceID: v.Target, Outcome: outcome(err), RequestID: requestIDFrom(r.Context())})
+	auditErr := s.store.Audit(r.Context(), domain.AuditEvent{Actor: actorFrom(r), Action: "asset.merge", ResourceType: "asset", ResourceID: v.Target, Outcome: outcome(err), RequestID: requestIDFrom(r.Context())})
+	if err == nil {
+		err = auditErr
+	}
 	respond(w, map[string]string{"status": "merged"}, err)
 }
 func (s *Server) listRules(w http.ResponseWriter, r *http.Request) {
@@ -304,7 +384,10 @@ func (s *Server) listRules(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) reloadRules(w http.ResponseWriter, r *http.Request) {
 	err := s.rules.Reload(s.rulePaths)
-	_ = s.store.Audit(r.Context(), domain.AuditEvent{Actor: "admin", Action: "rules.reload", ResourceType: "rules", Outcome: outcome(err), RequestID: requestIDFrom(r.Context())})
+	auditErr := s.store.Audit(r.Context(), domain.AuditEvent{Actor: actorFrom(r), Action: "rules.reload", ResourceType: "rules", Outcome: outcome(err), RequestID: requestIDFrom(r.Context())})
+	if err == nil {
+		err = auditErr
+	}
 	respond(w, s.rules.Current(), err)
 }
 func (s *Server) patchFinding(w http.ResponseWriter, r *http.Request) {
@@ -315,7 +398,10 @@ func (s *Server) patchFinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := s.store.UpdateFindingDisposition(r.Context(), r.PathValue("id"), v.Disposition)
-	_ = s.store.Audit(r.Context(), domain.AuditEvent{Actor: "admin", Action: "finding.disposition", ResourceType: "finding", ResourceID: r.PathValue("id"), Outcome: outcome(err), RequestID: requestIDFrom(r.Context())})
+	auditErr := s.store.Audit(r.Context(), domain.AuditEvent{Actor: actorFrom(r), Action: "finding.disposition", ResourceType: "finding", ResourceID: r.PathValue("id"), Outcome: outcome(err), RequestID: requestIDFrom(r.Context())})
+	if err == nil {
+		err = auditErr
+	}
 	respond(w, map[string]string{"status": "updated"}, err)
 }
 func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
@@ -329,7 +415,10 @@ func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
 	} else {
 		n, err = importer.JSONL(r.Context(), kind, reader, s.importSink, dry)
 	}
-	_ = s.store.Audit(r.Context(), domain.AuditEvent{Actor: "admin", Action: "import." + kind, ResourceType: "import", Outcome: outcome(err), RequestID: requestIDFrom(r.Context())})
+	auditErr := s.store.Audit(r.Context(), domain.AuditEvent{Actor: actorFrom(r), Action: "import." + kind, ResourceType: "import", Outcome: outcome(err), RequestID: requestIDFrom(r.Context())})
+	if err == nil {
+		err = auditErr
+	}
 	respond(w, map[string]any{"records": n, "dry_run": dry}, err)
 }
 func decode(w http.ResponseWriter, r *http.Request, v any, max int) error {

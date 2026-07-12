@@ -40,6 +40,25 @@ func TestRejectUnsafeBind(t *testing.T) {
 	}
 }
 
+func TestNonLoopbackRequiresCookieSafetyDecision(t *testing.T) {
+	c := Default()
+	c.Server.Bind = "0.0.0.0:8088"
+	c.Server.UnsafePublicBind = true
+	c.Server.AllowedHosts = []string{"console.example"}
+	if err := c.Validate(); err == nil {
+		t.Fatal("non-loopback bind accepted insecure cookies without explicit override")
+	}
+	c.Server.SecureCookies = true
+	if err := c.Validate(); err != nil {
+		t.Fatalf("secure proxy config rejected: %v", err)
+	}
+	c.Server.SecureCookies = false
+	c.Server.UnsafeAllowInsecureCookies = true
+	if err := c.Validate(); err != nil {
+		t.Fatalf("explicit container override rejected: %v", err)
+	}
+}
+
 func TestLoadResolvesPathsFromConfigDirectory(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "cortasentry.yaml")

@@ -13,7 +13,7 @@ paths:
   /readyz: {get: {security: [], responses: {'200': {description: Ready}}}}
   /metrics: {get: {security: [], responses: {'200': {description: Prometheus metrics}}}}
   /api/v1/auth/login: {post: {security: [], responses: {'200': {description: Session and CSRF token}, '401': {description: Invalid credentials}}}}
-  /api/v1/auth/session: {get: {security: [], responses: {'200': {description: Refreshed CSRF token for an existing session}, '401': {description: No valid session}}}}
+  /api/v1/auth/session: {post: {security: [], responses: {'200': {description: Refreshed CSRF token for an existing same-origin session}, '401': {description: No valid session}}}}
   /api/v1/auth/logout: {post: {responses: {'204': {description: Logged out}}}}
   /api/v1/assets: {get: {responses: {'200': {description: Paginated assets}}}}
   /api/v1/overview: {get: {responses: {'200': {description: Real aggregate console metrics}}}}

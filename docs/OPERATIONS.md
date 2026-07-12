@@ -14,7 +14,7 @@ Use `PRAGMA integrity_check` during planned maintenance. Never edit migration re
 
 `cortasentry token rotate` revokes existing administrator tokens and browser sessions, writes the new token file mode 0600, and shows it once. Store it in a password manager and restrict the data directory.
 
-The server binds `127.0.0.1:8088`. For remote access, terminate TLS at a maintained reverse proxy, add strong network access controls, preserve request limits/timeouts, and explicitly set `unsafe_public_bind: true` only after reviewing the exposure. Set `secure_cookies: true` (or `CORTASENTRY_SECURE_COOKIES=true`) when browsers reach the service over HTTPS. Docker Compose binds the published host port to loopback while explicitly allowing the container-internal bind.
+The server binds `127.0.0.1:8088`. For remote access, terminate TLS at a maintained reverse proxy, add strong network access controls, preserve the original Host header, configure exact `server.allowed_hosts`, and explicitly set `unsafe_public_bind: true` only after reviewing the exposure. Non-loopback deployments must set `secure_cookies: true` unless they also set the separate `unsafe_allow_insecure_cookies` override. The override exists for the supplied Docker Compose topology, whose container-internal bind is non-loopback but whose published host port remains loopback-only. Direct public HTTP deployment is unsafe.
 
 ## Logs, metrics, and rules
 

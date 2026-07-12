@@ -10,6 +10,7 @@ import (
 	"errors"
 	"github.com/google/uuid"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,33 @@ func randomToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 func hash(s string) []byte { v := sha256.Sum256([]byte(s)); return v[:] }
+func writeSecret(path, token string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".admin-token-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if err = tmp.Chmod(0600); err == nil {
+		_, err = tmp.WriteString(token + "\n")
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err = os.Rename(name, path); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0600)
+}
 func (m *Manager) Bootstrap(ctx context.Context, secretPath string) (string, error) {
 	var n int
 	if err := m.db.QueryRowContext(ctx, "SELECT count(*) FROM auth_tokens WHERE revoked_at IS NULL").Scan(&n); err != nil {
@@ -44,10 +72,7 @@ func (m *Manager) Bootstrap(ctx context.Context, secretPath string) (string, err
 	if err != nil {
 		return "", err
 	}
-	if err = os.MkdirAll(filepath.Dir(secretPath), 0700); err != nil {
-		return "", err
-	}
-	if err = os.WriteFile(secretPath, []byte(token+"\n"), 0600); err != nil {
+	if err = writeSecret(secretPath, token); err != nil {
 		return "", err
 	}
 	_, err = m.db.ExecContext(ctx, "INSERT INTO auth_tokens(id,token_hash,created_at) VALUES(?,?,?)", uuid.Must(uuid.NewV7()).String(), hash(token), time.Now().UTC().Format(time.RFC3339Nano))
@@ -58,22 +83,26 @@ func (m *Manager) Bootstrap(ctx context.Context, secretPath string) (string, err
 	return token, nil
 }
 func (m *Manager) VerifyToken(ctx context.Context, token string) bool {
+	return m.VerifyTokenID(ctx, token) != ""
+}
+func (m *Manager) VerifyTokenID(ctx context.Context, token string) string {
 	if len(token) < 32 || len(token) > 256 {
-		return false
+		return ""
 	}
-	rows, err := m.db.QueryContext(ctx, "SELECT token_hash FROM auth_tokens WHERE revoked_at IS NULL")
+	rows, err := m.db.QueryContext(ctx, "SELECT id,token_hash FROM auth_tokens WHERE revoked_at IS NULL")
 	if err != nil {
-		return false
+		return ""
 	}
 	defer rows.Close()
 	h := hash(token)
 	for rows.Next() {
+		var id string
 		var got []byte
-		if rows.Scan(&got) == nil && subtle.ConstantTimeCompare(h, got) == 1 {
-			return true
+		if rows.Scan(&id, &got) == nil && subtle.ConstantTimeCompare(h, got) == 1 {
+			return id
 		}
 	}
-	return false
+	return ""
 }
 func (m *Manager) Login(ctx context.Context, token string) (session, csrf string, err error) {
 	if !m.VerifyToken(ctx, token) {
@@ -88,32 +117,35 @@ func (m *Manager) Login(ctx context.Context, token string) (session, csrf string
 		return
 	}
 	now := time.Now().UTC()
+	_, _ = m.db.ExecContext(ctx, "DELETE FROM sessions WHERE expires_at<? OR revoked_at IS NOT NULL", now.Format(time.RFC3339Nano))
 	_, err = m.db.ExecContext(ctx, "INSERT INTO sessions(id,token_hash,csrf_hash,created_at,expires_at) VALUES(?,?,?,?,?)", uuid.Must(uuid.NewV7()).String(), hash(session), hash(csrf), now.Format(time.RFC3339Nano), now.Add(12*time.Hour).Format(time.RFC3339Nano))
 	return
 }
 func (m *Manager) Authenticate(r *http.Request) (string, bool) {
-	if v := r.Header.Get("Authorization"); strings.HasPrefix(v, "Bearer ") && m.VerifyToken(r.Context(), strings.TrimPrefix(v, "Bearer ")) {
-		return "token", true
+	if v := r.Header.Get("Authorization"); strings.HasPrefix(v, "Bearer ") {
+		if id := m.VerifyTokenID(r.Context(), strings.TrimPrefix(v, "Bearer ")); id != "" {
+			return "token:" + id, true
+		}
 	}
 	c, err := r.Cookie(CookieName)
 	if err != nil {
 		return "", false
 	}
-	var expires string
+	var id, expires string
 	var revoked sql.NullString
-	err = m.db.QueryRowContext(r.Context(), "SELECT expires_at,revoked_at FROM sessions WHERE token_hash=?", hash(c.Value)).Scan(&expires, &revoked)
+	err = m.db.QueryRowContext(r.Context(), "SELECT id,expires_at,revoked_at FROM sessions WHERE token_hash=?", hash(c.Value)).Scan(&id, &expires, &revoked)
 	if err != nil || revoked.Valid {
 		return "", false
 	}
 	t, err := time.Parse(time.RFC3339Nano, expires)
-	return "session", err == nil && time.Now().Before(t)
+	return "session:" + id, err == nil && time.Now().Before(t)
 }
 func (m *Manager) CheckCSRF(r *http.Request) bool {
 	kind, ok := m.Authenticate(r)
 	if !ok {
 		return false
 	}
-	if kind == "token" {
+	if strings.HasPrefix(kind, "token:") {
 		return true
 	}
 	c, err := r.Cookie(CookieName)
@@ -132,7 +164,7 @@ func (m *Manager) CheckCSRF(r *http.Request) bool {
 }
 func (m *Manager) RefreshCSRF(ctx context.Context, r *http.Request) (string, error) {
 	kind, ok := m.Authenticate(r)
-	if !ok || kind != "session" {
+	if !ok || !strings.HasPrefix(kind, "session:") {
 		return "", errors.New("valid browser session required")
 	}
 	c, err := r.Cookie(CookieName)
@@ -156,6 +188,23 @@ func (m *Manager) RefreshCSRF(ctx context.Context, r *http.Request) (string, err
 func (m *Manager) SetCookie(w http.ResponseWriter, value string) {
 	http.SetCookie(w, &http.Cookie{Name: CookieName, Value: value, Path: "/", HttpOnly: true, Secure: m.secure, SameSite: http.SameSiteStrictMode, MaxAge: 12 * 60 * 60})
 }
+func (m *Manager) ClearCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: CookieName, Path: "/", HttpOnly: true, Secure: m.secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+}
+func BrowserOriginAllowed(r *http.Request) bool {
+	if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
+		return false
+	}
+	raw := strings.TrimSpace(r.Header.Get("Origin"))
+	if raw == "" {
+		return true
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
+}
 func (m *Manager) Logout(ctx context.Context, r *http.Request) error {
 	c, err := r.Cookie(CookieName)
 	if err != nil {
@@ -164,27 +213,33 @@ func (m *Manager) Logout(ctx context.Context, r *http.Request) error {
 	_, err = m.db.ExecContext(ctx, "UPDATE sessions SET revoked_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339Nano), hash(c.Value))
 	return err
 }
+func (m *Manager) RevokeSession(ctx context.Context, value string) error {
+	_, err := m.db.ExecContext(ctx, "UPDATE sessions SET revoked_at=? WHERE token_hash=?", time.Now().UTC().Format(time.RFC3339Nano), hash(value))
+	return err
+}
 func (m *Manager) Rotate(ctx context.Context, secretPath string) (string, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	token, err := randomToken()
+	if err != nil {
+		return "", err
+	}
+	id := uuid.Must(uuid.NewV7()).String()
+	if _, err = m.db.ExecContext(ctx, "INSERT INTO auth_tokens(id,token_hash,created_at) VALUES(?,?,?)", id, hash(token), now); err != nil {
+		return "", err
+	}
+	if err = writeSecret(secretPath, token); err != nil {
+		_, _ = m.db.ExecContext(ctx, "DELETE FROM auth_tokens WHERE id=?", id)
+		return "", err
+	}
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback()
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err = tx.ExecContext(ctx, "UPDATE auth_tokens SET revoked_at=? WHERE revoked_at IS NULL", now); err != nil {
+	if _, err = tx.ExecContext(ctx, "UPDATE auth_tokens SET revoked_at=? WHERE id<>? AND revoked_at IS NULL", now, id); err != nil {
 		return "", err
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE sessions SET revoked_at=? WHERE revoked_at IS NULL", now); err != nil {
-		return "", err
-	}
-	token, err := randomToken()
-	if err != nil {
-		return "", err
-	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO auth_tokens(id,token_hash,created_at) VALUES(?,?,?)", uuid.Must(uuid.NewV7()).String(), hash(token), now); err != nil {
-		return "", err
-	}
-	if err = os.WriteFile(secretPath, []byte(token+"\n"), 0600); err != nil {
 		return "", err
 	}
 	if err = tx.Commit(); err != nil {

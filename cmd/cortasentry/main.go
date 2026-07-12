@@ -129,6 +129,9 @@ func initCommand(args []string) error {
 	if err := os.MkdirAll(c.Server.DataDir, 0700); err != nil {
 		return err
 	}
+	if err := os.Chmod(c.Server.DataDir, 0700); err != nil {
+		return err
+	}
 	s, err := sqlite.Open(c.Server.Database)
 	if err != nil {
 		return err
@@ -158,6 +161,9 @@ type app struct {
 
 func openApp(c config.Config) (*app, error) {
 	if err := os.MkdirAll(c.Server.DataDir, 0700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(c.Server.DataDir, 0700); err != nil {
 		return nil, err
 	}
 	s, err := sqlite.Open(c.Server.Database)
@@ -255,7 +261,7 @@ func serve(args []string) error {
 	defer a.store.Close()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	a.jobs.Start(context.Background())
-	srv := api.New(a.store, a.auth, a.scope, a.scanner, a.rules, a.advisories, c.Rules.DevicePaths, log, a.jobs)
+	srv := api.New(a.store, a.auth, a.scope, a.scanner, a.rules, a.advisories, c.Rules.DevicePaths, c.HTTPAllowedHosts(), log, a.jobs)
 	srv.EnableWeb()
 	server := &http.Server{Addr: c.Server.Bind, Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10}
 	log.Info("server starting", "bind", c.Server.Bind, "version", version)
@@ -474,7 +480,9 @@ func tokenCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	_ = a.store.Audit(context.Background(), domain.AuditEvent{Actor: "admin", Action: "token.rotate", ResourceType: "auth_token", Outcome: "success"})
+	if err = a.store.Audit(context.Background(), domain.AuditEvent{Actor: "local-cli", Action: "token.rotate", ResourceType: "auth_token", Outcome: "success"}); err != nil {
+		return fmt.Errorf("token rotated but audit persistence failed: %w", err)
+	}
 	fmt.Println("Token rotated. New token (shown once):", token)
 	return nil
 }

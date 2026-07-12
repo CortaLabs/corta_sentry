@@ -72,4 +72,17 @@ func TestMCPToolsAndSafetyGates(t *testing.T) {
 	if !denied.IsError {
 		t.Fatal("disabled MCP write tool succeeded")
 	}
+	for name, arguments := range map[string]map[string]any{
+		"job_cancel": {"job_id": "missing"}, "rules_reload": {}, "asset_merge": {"source_asset_id": "a", "target_asset_id": "b", "confirm": true}, "finding_set_disposition": {"finding_id": "missing", "disposition": "false_positive"}, "change_acknowledge": {"change_id": "missing", "acknowledged": true},
+	} {
+		result, callErr := cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: arguments})
+		if callErr != nil || !result.IsError {
+			t.Fatalf("disabled mutation %s result=%#v err=%v", name, result, callErr)
+		}
+	}
+	app.Config.MCP.WriteEnabled = true
+	activeDenied, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "scan_create", Arguments: map[string]any{"targets": []string{"127.0.0.1"}, "ports": []int{80}, "idempotency_key": "gate-matrix"}})
+	if err != nil || !activeDenied.IsError {
+		t.Fatalf("write-enabled active-disabled scan result=%#v err=%v", activeDenied, err)
+	}
 }

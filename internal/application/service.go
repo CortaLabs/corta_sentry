@@ -98,8 +98,11 @@ func (s *Service) CancelJob(ctx context.Context, p Principal, id string) error {
 		return errors.New("job manager unavailable")
 	}
 	err := s.Jobs.Cancel(ctx, id)
-	_ = s.audit(ctx, p, "job.cancel", "job", id, outcome(err), nil)
-	return err
+	auditErr := s.audit(ctx, p, "job.cancel", "job", id, outcome(err), nil)
+	if err != nil {
+		return err
+	}
+	return auditErr
 }
 func (s *Service) ReloadRules(ctx context.Context, p Principal) error {
 	if err := s.Rules.Reload(s.Config.Rules.DevicePaths); err != nil {
@@ -110,18 +113,27 @@ func (s *Service) ReloadRules(ctx context.Context, p Principal) error {
 }
 func (s *Service) MergeAssets(ctx context.Context, p Principal, source, target string) error {
 	err := s.Store.MergeAssets(ctx, source, target)
-	_ = s.audit(ctx, p, "asset.merge", "asset", target, outcome(err), map[string]any{"source": source})
-	return err
+	auditErr := s.audit(ctx, p, "asset.merge", "asset", target, outcome(err), map[string]any{"source": source})
+	if err != nil {
+		return err
+	}
+	return auditErr
 }
 func (s *Service) SetFindingDisposition(ctx context.Context, p Principal, id, disposition string) error {
 	err := s.Store.UpdateFindingDisposition(ctx, id, disposition)
-	_ = s.audit(ctx, p, "finding.disposition", "finding", id, outcome(err), map[string]any{"disposition": disposition})
-	return err
+	auditErr := s.audit(ctx, p, "finding.disposition", "finding", id, outcome(err), map[string]any{"disposition": disposition})
+	if err != nil {
+		return err
+	}
+	return auditErr
 }
 func (s *Service) AcknowledgeChange(ctx context.Context, p Principal, id string, ack bool) error {
 	err := s.Store.AcknowledgeChange(ctx, id, ack)
-	_ = s.audit(ctx, p, "change.acknowledge", "change", id, outcome(err), map[string]any{"acknowledged": ack})
-	return err
+	auditErr := s.audit(ctx, p, "change.acknowledge", "change", id, outcome(err), map[string]any{"acknowledged": ack})
+	if err != nil {
+		return err
+	}
+	return auditErr
 }
 func (s *Service) audit(ctx context.Context, p Principal, action, resourceType, resourceID, result string, details any) error {
 	b := json.RawMessage(`{}`)

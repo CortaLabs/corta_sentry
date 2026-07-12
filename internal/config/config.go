@@ -27,11 +27,13 @@ type Config struct {
 	MCP     MCP     `yaml:"mcp"`
 }
 type Server struct {
-	Bind             string `yaml:"bind"`
-	DataDir          string `yaml:"data_dir"`
-	Database         string `yaml:"database"`
-	UnsafePublicBind bool   `yaml:"unsafe_public_bind"`
-	SecureCookies    bool   `yaml:"secure_cookies"`
+	Bind                       string   `yaml:"bind"`
+	DataDir                    string   `yaml:"data_dir"`
+	Database                   string   `yaml:"database"`
+	UnsafePublicBind           bool     `yaml:"unsafe_public_bind"`
+	SecureCookies              bool     `yaml:"secure_cookies"`
+	UnsafeAllowInsecureCookies bool     `yaml:"unsafe_allow_insecure_cookies"`
+	AllowedHosts               []string `yaml:"allowed_hosts"`
 }
 type Scope struct {
 	ActiveEnabled      bool     `yaml:"active_enabled"`
@@ -162,6 +164,12 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("CORTASENTRY_SECURE_COOKIES"); v == "1" || strings.EqualFold(v, "true") {
 		c.Server.SecureCookies = true
 	}
+	if v := os.Getenv("CORTASENTRY_UNSAFE_ALLOW_INSECURE_COOKIES"); v == "1" || strings.EqualFold(v, "true") {
+		c.Server.UnsafeAllowInsecureCookies = true
+	}
+	if v := os.Getenv("CORTASENTRY_ALLOWED_HOSTS"); v != "" {
+		c.Server.AllowedHosts = strings.Split(v, ",")
+	}
 }
 func (c Config) Validate() error {
 	if c.Version != CurrentVersion {
@@ -183,6 +191,18 @@ func (c Config) Validate() error {
 	}
 	if !ip.Unmap().IsLoopback() && !c.Server.UnsafePublicBind {
 		return errors.New("non-loopback bind requires unsafe_public_bind: true and a secured reverse proxy")
+	}
+	if !ip.Unmap().IsLoopback() && !c.Server.SecureCookies && !c.Server.UnsafeAllowInsecureCookies {
+		return errors.New("non-loopback bind requires secure_cookies: true; loopback-published containers require explicit unsafe_allow_insecure_cookies: true")
+	}
+	if !ip.Unmap().IsLoopback() && len(c.Server.AllowedHosts) == 0 {
+		return errors.New("non-loopback bind requires explicit allowed_hosts")
+	}
+	for _, host := range c.Server.AllowedHosts {
+		host = strings.TrimSpace(host)
+		if host == "" || len(host) > 255 || strings.ContainsAny(host, "/\\ \t\r\n") {
+			return fmt.Errorf("invalid server.allowed_hosts entry %q", host)
+		}
 	}
 	if c.Scope.MaxHostsPerJob < 1 || c.Scope.MaxPortsPerHost < 1 {
 		return errors.New("scope budgets must be positive")
@@ -230,6 +250,17 @@ func (c Config) Validate() error {
 		return errors.New("active scanning enabled without allowed_cidrs")
 	}
 	return nil
+}
+func (c Config) HTTPAllowedHosts() []string {
+	if len(c.Server.AllowedHosts) > 0 {
+		out := make([]string, 0, len(c.Server.AllowedHosts))
+		for _, h := range c.Server.AllowedHosts {
+			out = append(out, strings.ToLower(strings.TrimSpace(h)))
+		}
+		return out
+	}
+	host, port, _ := net.SplitHostPort(c.Server.Bind)
+	return []string{strings.ToLower(net.JoinHostPort(host, port)), strings.ToLower(net.JoinHostPort("127.0.0.1", port)), strings.ToLower(net.JoinHostPort("::1", port)), strings.ToLower(net.JoinHostPort("localhost", port))}
 }
 func Write(path string, c Config) error {
 	if err := c.Validate(); err != nil {

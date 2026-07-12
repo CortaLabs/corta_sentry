@@ -4,6 +4,8 @@ CortaSentry includes an MCP `2025-11-25` stdio server built with the official Go
 
 MCP is an adapter over the same SQLite store, authorization engine, durable job manager, scanner, rules, and audit trail used by the server. It cannot execute SQL, commands, arbitrary scripts, token operations, unrestricted file reads, or arbitrary URL requests. `scan_create` still normalizes, allowlists, audits, rate-limits, and rechecks every IP/port at connection time.
 
+The stdio MCP process trusts the local operating-system user that launches it; it has no independent network credential layer. Read access and safety gates are workflow controls for agent harnesses, not isolation from other code running as the same user. Protect the configuration and 0700 data directory accordingly.
+
 ## Safety gates
 
 Read tools work by default. Mutations require:

@@ -8,5 +8,7 @@ services:
       CORTASENTRY_CONFIG: /data/cortasentry.yaml
       CORTASENTRY_BIND: 0.0.0.0:8088
       CORTASENTRY_UNSAFE_PUBLIC_BIND: "true"
+      CORTASENTRY_UNSAFE_ALLOW_INSECURE_COOKIES: "true"
+      CORTASENTRY_ALLOWED_HOSTS: "127.0.0.1:8088,localhost:8088"
 volumes:
   cortasentry-data: {}

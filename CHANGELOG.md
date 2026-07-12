@@ -12,3 +12,4 @@
 - Official MCP toolset for Codex and Claude, versioned observation JSONL export, and Linux passive host-connection snapshots.
 - Fixed empty-job JSON responses that broke the Scans view, custom-config path resolution, terminal queued cancellation, and strong-identity continuity conflicts.
 - Split successful preflight authorization traces from primary operator audit events while retaining fail-closed persistence and execution-time audit; made resolver attachment reasons name their exact evidence path.
+- Hardened the control plane with exact Host allowlists, same-origin POST session refresh, per-source login limits and denial audit, attributable token/session actors, crash-safe staged token rotation, repaired 0600/0700 state permissions, secure-cookie validation, and complete MCP mutation-gate tests.

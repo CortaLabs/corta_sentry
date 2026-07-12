@@ -8,6 +8,7 @@ import (
 	"github.com/cortalabs/cortasentry/internal/domain"
 	"github.com/cortalabs/cortasentry/internal/scope"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -18,6 +19,11 @@ func TestMigrationPersistenceAndObservationImmutability(t *testing.T) {
 	s, err := Open(p)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if info, statErr := os.Stat(p); statErr != nil {
+		t.Fatal(statErr)
+	} else if info.Mode().Perm() != 0600 {
+		t.Fatalf("database mode=%v", info.Mode().Perm())
 	}
 	o := domain.Observation{SensorID: "test", Source: domain.SourceManual, TargetIP: netip.MustParseAddr("127.0.0.1"), Evidence: json.RawMessage(`{"fact":true}`), CollectorVersion: "test", PolicyDecisionID: "manual"}
 	if err = s.AddObservation(context.Background(), &o); err != nil {

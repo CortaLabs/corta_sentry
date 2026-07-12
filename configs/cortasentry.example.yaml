@@ -5,6 +5,8 @@ server:
   database: ./data/cortasentry.db
   unsafe_public_bind: false
   secure_cookies: false
+  unsafe_allow_insecure_cookies: false
+  allowed_hosts: []
 scope:
   active_enabled: false
   allowed_cidrs: []

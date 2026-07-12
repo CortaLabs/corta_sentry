@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"strings"
 	"time"
 
@@ -63,6 +64,12 @@ func Open(path string) (*Store, error) {
 	if err = s.verifyPragmas(ctx); err != nil {
 		db.Close()
 		return nil, err
+	}
+	if path != ":memory:" && !strings.HasPrefix(path, "file:") {
+		if err = os.Chmod(path, 0600); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("secure database permissions: %w", err)
+		}
 	}
 	return s, nil
 }
