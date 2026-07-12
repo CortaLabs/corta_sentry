@@ -1,0 +1,16 @@
+schema_version: 1
+id: service.generic-web
+version: 1.0.0
+status: active
+device_class: unknown
+vendor: ""
+product_family: Web server
+required: []
+positive:
+  - {source_type: http, field_path: http.status, operator: exists, value: true, weight: 0.25, explanation: HTTP responded}
+negative: []
+explanation: Generic web service evidence; no device identity claimed.
+author: CortaSentry contributors
+source: Built-in fallback rule
+created_at: 2026-07-12
+updated_at: 2026-07-12

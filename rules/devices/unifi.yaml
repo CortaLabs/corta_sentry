@@ -1,0 +1,16 @@
+schema_version: 1
+id: device.ubiquiti.unifi
+version: 1.0.0
+status: active
+device_class: network_device
+vendor: Ubiquiti
+product_family: UniFi
+required: []
+positive:
+  - {source_type: http, field_path: http.title, operator: contains, value: UniFi, weight: 0.6, explanation: UniFi title marker}
+negative: []
+explanation: UI evidence suggests a Ubiquiti UniFi device.
+author: CortaSentry contributors
+source: Built-in illustrative rule
+created_at: 2026-07-12
+updated_at: 2026-07-12

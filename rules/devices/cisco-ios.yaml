@@ -1,0 +1,16 @@
+schema_version: 1
+id: device.cisco.ios-family
+version: 1.0.0
+status: active
+device_class: network_device
+vendor: Cisco
+product_family: IOS family
+required: []
+positive:
+  - {source_type: banner, field_path: banner.text, operator: contains, value: Cisco IOS, weight: 0.65, explanation: Banner reports Cisco IOS}
+negative: []
+explanation: Banner evidence suggests a Cisco IOS-family device.
+author: CortaSentry contributors
+source: Built-in illustrative rule
+created_at: 2026-07-12
+updated_at: 2026-07-12

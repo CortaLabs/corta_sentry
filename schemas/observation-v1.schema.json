@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cortalabs.dev/cortasentry/schemas/observation-v1.schema.json",
+  "title": "CortaSentry Observation Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "observation_id", "sensor_id", "observed_at", "ingested_at", "source", "target_ip", "evidence", "collector_version", "truncated", "provenance"],
+  "properties": {
+    "schema_version": {"const": "cortasentry.observation.v1"},
+    "observation_id": {"type": "string", "format": "uuid"},
+    "sensor_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "job_id": {"type": "string", "maxLength": 256},
+    "asset_id": {"type": "string", "maxLength": 256},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "ingested_at": {"type": "string", "format": "date-time"},
+    "source": {"type": "string", "enum": ["neighbor", "tcp_connect", "banner", "http", "tls", "mdns", "ssdp", "host_connection", "imported_nmap", "imported_zeek", "imported_suricata", "imported_nuclei", "manual"]},
+    "target_ip": {"type": "string"},
+    "target_port": {"type": "integer", "minimum": 0, "maximum": 65535},
+    "transport": {"type": "string", "maxLength": 32},
+    "application": {"type": "string", "maxLength": 128},
+    "evidence": {"type": "object"},
+    "raw_evidence_digest": {"type": "string", "maxLength": 256},
+    "collector_version": {"type": "string", "minLength": 1, "maxLength": 256},
+    "policy_decision_id": {"type": "string", "maxLength": 256},
+    "truncated": {"type": "boolean"},
+    "provenance": {"type": "object"}
+  }
+}

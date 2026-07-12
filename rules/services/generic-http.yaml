@@ -1,0 +1,6 @@
+schema_version: 1
+id: service.http.generic
+version: 1.0.0
+status: active
+service: http
+description: Generic bounded HTTP response observation. This file documents service-rule direction and is not loaded as a device claim.

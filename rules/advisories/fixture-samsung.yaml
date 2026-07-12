@@ -1,0 +1,12 @@
+schema_version: 1
+id: CS-FIXTURE-2026-0001
+rule_version: 1.0.0
+fixture_only: true
+vendor: Samsung
+product_family: Tizen TV
+affected_versions: [">= 0.0.0, < 1.0.0"]
+severity: medium
+required_evidence: [product_family, firmware]
+safe_validation_status: unavailable
+references: ["https://example.invalid/cortasentry-fixture-advisory"]
+remediation: Fixture only. Confirm firmware and consult the real vendor advisory.
