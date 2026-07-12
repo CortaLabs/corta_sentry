@@ -1,0 +1,13 @@
+/bin/
+/data/
+/cortasentry.yaml
+*.db
+*.db-shm
+*.db-wal
+*.token
+web/node_modules/
+web/.vite/
+*.tsbuildinfo
+coverage/
+*.log
+.DS_Store

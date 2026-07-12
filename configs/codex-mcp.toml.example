@@ -1,0 +1,11 @@
+[mcp_servers.cortasentry]
+command = "/usr/local/bin/cortasentry"
+args = ["mcp"]
+cwd = "/absolute/path/to/cortasentry-data"
+startup_timeout_sec = 10
+tool_timeout_sec = 60
+required = false
+default_tools_approval_mode = "writes"
+
+[mcp_servers.cortasentry.env]
+CORTASENTRY_CONFIG = "/absolute/path/to/cortasentry-data/cortasentry.yaml"

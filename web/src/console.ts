@@ -1,0 +1,4 @@
+export function human(value:string):string{return String(value||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase())}
+export function stamp(value:string):string{return value?new Date(value).toLocaleString():'—'}
+export function ago(value:string,now=Date.now()):string{if(!value)return'—';const seconds=(now-new Date(value).getTime())/1000;if(seconds<60)return`${Math.max(0,Math.round(seconds))}s ago`;if(seconds<3600)return`${Math.round(seconds/60)}m ago`;if(seconds<86400)return`${Math.round(seconds/3600)}h ago`;return`${Math.round(seconds/86400)}d ago`}
+export function scanSpec(targets:string,ports:string){return{targets:[...new Set(targets.split(',').map(x=>x.trim()).filter(Boolean))],ports:[...new Set(ports.split(',').map(x=>Number(x.trim())).filter(x=>Number.isInteger(x)&&x>=1&&x<=65535))]}}

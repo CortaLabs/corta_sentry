@@ -1,0 +1,4 @@
+.token-file { margin-top: 12px !important; text-align: center; }
+.token-file input { position: absolute; opacity: 0; pointer-events: none; }
+.token-file span { display: block; border: 1px dashed #31515a; padding: 10px; color: var(--cyan); cursor: pointer; }
+.token-file span:hover { background: #0e2926; }

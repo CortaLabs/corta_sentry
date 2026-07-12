@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "cortasentry": {
+      "type": "stdio",
+      "command": "/usr/local/bin/cortasentry",
+      "args": ["mcp"],
+      "env": {
+        "CORTASENTRY_CONFIG": "/absolute/path/to/cortasentry-data/cortasentry.yaml"
+      }
+    }
+  }
+}

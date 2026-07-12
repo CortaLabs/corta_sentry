@@ -1,0 +1,39 @@
+version: 1
+server:
+  bind: 127.0.0.1:8088
+  data_dir: ./data
+  database: ./data/cortasentry.db
+  unsafe_public_bind: false
+  secure_cookies: false
+scope:
+  active_enabled: false
+  allowed_cidrs: []
+  denied_cidrs: []
+  allow_public_targets: false
+  allowed_ports: [22, 23, 53, 80, 443, 554, 8000, 8001, 8002, 8080, 8443]
+  excluded_ports: []
+  max_hosts_per_job: 256
+  max_ports_per_host: 64
+limits:
+  max_concurrency: 32
+  connects_per_second: 50
+  per_host_connects_per_second: 5
+  connect_timeout: 750ms
+  read_timeout: 1s
+  max_banner_bytes: 8192
+  max_http_body_bytes: 65536
+  max_headers: 100
+  max_redirects: 0
+  max_job_duration: 10m
+jobs:
+  workers: 2
+  max_queued: 1024
+  lease_duration: 30s
+  poll_interval: 250ms
+rules:
+  device_paths: [./rules/devices]
+  advisory_paths: [./rules/advisories]
+logging: {level: info, format: json}
+mcp:
+  write_enabled: false
+  active_tools_enabled: false
