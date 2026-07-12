@@ -1,0 +1,12 @@
+services:
+  cortasentry:
+    build: .
+    restart: unless-stopped
+    ports: ["127.0.0.1:8088:8088"]
+    volumes: ["cortasentry-data:/data"]
+    environment:
+      CORTASENTRY_CONFIG: /data/cortasentry.yaml
+      CORTASENTRY_BIND: 0.0.0.0:8088
+      CORTASENTRY_UNSAFE_PUBLIC_BIND: "true"
+volumes:
+  cortasentry-data: {}

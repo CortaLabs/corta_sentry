@@ -1,0 +1,39 @@
+openapi: 3.1.0
+info: {title: CortaSentry API, version: 0.1.0, description: Authorized defensive asset intelligence API}
+servers: [{url: http://127.0.0.1:8088}]
+components:
+  securitySchemes:
+    bearer: {type: http, scheme: bearer}
+    session: {type: apiKey, in: cookie, name: cortasentry_session}
+  schemas:
+    Error: {type: object, properties: {error: {type: object, properties: {code: {type: string}, message: {type: string}}}}}
+security: [{bearer: []}, {session: []}]
+paths:
+  /healthz: {get: {security: [], responses: {'200': {description: Healthy}}}}
+  /readyz: {get: {security: [], responses: {'200': {description: Ready}}}}
+  /metrics: {get: {security: [], responses: {'200': {description: Prometheus metrics}}}}
+  /api/v1/auth/login: {post: {security: [], responses: {'200': {description: Session and CSRF token}, '401': {description: Invalid credentials}}}}
+  /api/v1/auth/session: {get: {security: [], responses: {'200': {description: Refreshed CSRF token for an existing session}, '401': {description: No valid session}}}}
+  /api/v1/auth/logout: {post: {responses: {'204': {description: Logged out}}}}
+  /api/v1/assets: {get: {responses: {'200': {description: Paginated assets}}}}
+  /api/v1/overview: {get: {responses: {'200': {description: Real aggregate console metrics}}}}
+  /api/v1/status: {get: {responses: {'200': {description: Scope and rules status}}}}
+  /api/v1/assets/{id}: {get: {parameters: [{in: path, name: id, required: true, schema: {type: string}}], responses: {'200': {description: Asset}}}}
+  /api/v1/assets/{id}/observations: {get: {parameters: [{in: path, name: id, required: true, schema: {type: string}}], responses: {'200': {description: Asset observations}}}}
+  /api/v1/assets/{id}/changes: {get: {parameters: [{in: path, name: id, required: true, schema: {type: string}}], responses: {'200': {description: Asset changes}}}}
+  /api/v1/assets/{id}/findings: {get: {parameters: [{in: path, name: id, required: true, schema: {type: string}}], responses: {'200': {description: Asset findings}}}}
+  /api/v1/assets/{id}/candidates: {get: {parameters: [{in: path, name: id, required: true, schema: {type: string}}], responses: {'200': {description: Explainable fingerprint candidates and score breakdowns}}}}
+  /api/v1/assets/merge: {post: {responses: {'200': {description: Assets merged}, '400': {description: Identity conflict}}}}
+  /api/v1/observations: {get: {responses: {'200': {description: Observations}}}}
+  /api/v1/observations/export: {get: {responses: {'200': {description: Versioned observation JSONL export, content: {application/x-ndjson: {schema: {type: string}}}}}}}
+  /api/v1/scans: {get: {responses: {'200': {description: Scans}}}, post: {responses: {'202': {description: Scan accepted}, '403': {description: Scope denied}}}}
+  /api/v1/scans/preview: {post: {responses: {'200': {description: Non-mutating normalized authorization preview}}}}
+  /api/v1/scans/{id}/cancel: {post: {parameters: [{in: path, name: id, required: true, schema: {type: string}}], responses: {'200': {description: Cancellation requested}}}}
+  /api/v1/jobs: {get: {responses: {'200': {description: Jobs}}}}
+  /api/v1/rules: {get: {responses: {'200': {description: Active rule set}}}}
+  /api/v1/rules/reload: {post: {responses: {'200': {description: Rules reloaded}}}}
+  /api/v1/findings: {get: {responses: {'200': {description: Findings}}}}
+  /api/v1/findings/{id}: {patch: {parameters: [{in: path, name: id, required: true, schema: {type: string}}], responses: {'200': {description: Disposition updated}}}}
+  /api/v1/changes: {get: {responses: {'200': {description: Changes}}}}
+  /api/v1/audit: {get: {responses: {'200': {description: Audit history}}}}
+  /api/v1/imports: {post: {responses: {'200': {description: Import result}}}}

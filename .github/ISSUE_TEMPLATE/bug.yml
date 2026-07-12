@@ -1,0 +1,13 @@
+name: Bug report
+description: Report a reproducible non-security defect
+body:
+  - type: markdown
+    attributes: {value: "For security vulnerabilities, follow SECURITY.md instead."}
+  - type: input
+    id: version
+    attributes: {label: Version}
+    validations: {required: true}
+  - type: textarea
+    id: reproduction
+    attributes: {label: Reproduction and observed behavior}
+    validations: {required: true}
